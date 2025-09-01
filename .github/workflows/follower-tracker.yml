@@ -1,13 +1,15 @@
-# .github/workflows/follower-tracker.yml
-# GitHub Actions workflow for tracking Twitter followers
+# Option 1: GitHub Actions + Twitter API (Free Tier - 1500 posts/month)
+# You can use Twitter's free API tier which allows 1,500 posts per month
+# Perfect for daily follower updates (30 posts/month)
 
+# .github/workflows/follower-tracker.yml
 name: Twitter Follower Tracker
 
 on:
   schedule:
-    # Run every day at 7 PM IST (1:30 PM UTC - IST is UTC+5:30)
+    # Run every day at 7 PM IST (1:30 PM UTC)
     - cron: '30 13 * * *'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   track-followers:
@@ -24,14 +26,17 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install requests beautifulsoup4 lxml
+        pip install requests beautifulsoup4 tweepy
     
-    - name: Track followers
-      run: python track_followers.py
+    - name: Track followers and tweet
+      run: python track_and_tweet.py
       env:
         TARGET_USERNAME: ${{ vars.TARGET_USERNAME }}
-        IFTTT_WEBHOOK_KEY: ${{ secrets.IFTTT_WEBHOOK_KEY }}
-        IFTTT_EVENT_NAME: ${{ vars.IFTTT_EVENT_NAME }}
+        TWITTER_BEARER_TOKEN: ${{ secrets.TWITTER_BEARER_TOKEN }}
+        TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+        TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+        TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+        TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
     
     - name: Commit and push changes
       run: |
