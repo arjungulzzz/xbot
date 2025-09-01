@@ -53,49 +53,72 @@ class TwitterFollowerBot:
     def get_follower_count(self, username):
         """Scrape follower count from multiple sources"""
         
-        # Method 1: Try Nitter instances
+        # Method 1: Try multiple Nitter instances with better error handling
         nitter_instances = [
             "https://nitter.net",
-            "https://nitter.privacydev.net",
-            "https://nitter.poast.org",
-            "https://nitter.it"
+            "https://nitter.it",
+            "https://nitter.fdn.fr",
+            "https://nitter.kavin.rocks",
+            "https://nitter.unixfox.eu",
+            "https://nitter.domain.glass"
         ]
         
         for instance in nitter_instances:
             try:
                 url = f"{instance}/{username}"
-                response = requests.get(url, headers=self.headers, timeout=15)
+                logger.info(f"Trying {instance}")
+                response = requests.get(url, headers=self.headers, timeout=10)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
                     
-                    # Look for follower count in various ways
+                    # Multiple methods to find follower count
+                    count = None
+                    
                     # Method 1: profile-stat-num class
                     stats = soup.find_all('span', class_='profile-stat-num')
-                    for i, stat in enumerate(stats):
-                        # Followers usually at index 1
-                        if i == 1:
-                            count_text = stat.get_text().strip()
-                            count = self.parse_count(count_text)
-                            if count and count > 1000:  # Sanity check
-                                logger.info(f"Got count from {instance}: {count:,}")
-                                return count
+                    if len(stats) >= 2:  # Should have tweets, following, followers
+                        count_text = stats[1].get_text().strip()  # Followers usually at index 1
+                        count = self.parse_count(count_text)
                     
-                    # Method 2: Look for text containing "followers"
-                    follower_text = soup.find(string=re.compile(r'[\d,KM]+\s*[Ff]ollowers?'))
-                    if follower_text:
-                        match = re.search(r'([\d,KM]+)', follower_text)
-                        if match:
-                            count = self.parse_count(match.group(1))
-                            if count and count > 1000:
-                                logger.info(f"Got count from {instance} (text search): {count:,}")
-                                return count
-                
+                    # Method 2: Look for profile-stat with "followers" text
+                    if not count:
+                        stat_divs = soup.find_all('div', class_='profile-stat')
+                        for div in stat_divs:
+                            if 'follower' in div.get_text().lower():
+                                num_span = div.find('span', class_='profile-stat-num')
+                                if num_span:
+                                    count = self.parse_count(num_span.get_text().strip())
+                                    break
+                    
+                    # Method 3: Look for any text with "followers"
+                    if not count:
+                        follower_elements = soup.find_all(string=re.compile(r'[\d,KM.]+\s*[Ff]ollowers?'))
+                        for element in follower_elements:
+                            match = re.search(r'([\d,KM.]+)', element)
+                            if match:
+                                count = self.parse_count(match.group(1))
+                                if count:
+                                    break
+                    
+                    if count and count > 100:  # Basic sanity check
+                        logger.info(f"✓ Got follower count from {instance}: {count:,}")
+                        return count
+                    else:
+                        logger.info(f"✗ No valid count found on {instance}")
+                else:
+                    logger.info(f"✗ {instance} returned status {response.status_code}")
+                    
+            except requests.exceptions.Timeout:
+                logger.warning(f"✗ {instance} timed out")
+            except requests.exceptions.ConnectionError:
+                logger.warning(f"✗ {instance} connection failed")
             except Exception as e:
-                logger.warning(f"Nitter {instance} failed: {e}")
+                logger.warning(f"✗ {instance} failed: {str(e)[:100]}")
                 continue
         
-        # Method 2: Try Social Blade as backup
+        # Method 2: Try Social Blade
+        logger.info("Trying Social Blade...")
         try:
             url = f"https://socialblade.com/twitter/user/{username}"
             response = requests.get(url, headers=self.headers, timeout=15)
@@ -103,36 +126,38 @@ class TwitterFollowerBot:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Look for numbers that could be follower counts
-                all_text = soup.get_text()
-                numbers = re.findall(r'\b(\d{1,3}(?:,\d{3})+)\b', all_text)
+                # Look for follower count in Social Blade
+                # Try to find elements that might contain follower count
+                potential_numbers = []
                 
-                for num_str in numbers:
-                    num = int(num_str.replace(',', ''))
-                    if 100000 <= num <= 500000000:  # Reasonable range
-                        logger.info(f"Got count from Social Blade: {num:,}")
-                        return num
-                        
-        except Exception as e:
-            logger.warning(f"Social Blade failed: {e}")
-        
-        return None
+                # Look for numbers in span tags with specific styles
+                number_spans = soup.find_all('span', style=re.compile(r'font-weight:\s*bold'))
+                for span in number_spans:
+                    text = span.get_text().strip()
+                    if re.match(r'^\d{1,3}(,\d{3})*
     
     def parse_count(self, count_text):
         """Parse follower count text (handles K, M notation)"""
         if not count_text:
             return None
             
-        count_text = count_text.strip().upper().replace(',', '')
+        count_text = count_text.strip().upper().replace(',', '').replace(' ', '')
         
         try:
+            # Handle decimal notation like "1.2M" or "150.5K"
             if 'K' in count_text:
-                return int(float(count_text.replace('K', '')) * 1000)
+                base = float(count_text.replace('K', ''))
+                return int(base * 1000)
             elif 'M' in count_text:
-                return int(float(count_text.replace('M', '')) * 1000000)
+                base = float(count_text.replace('M', ''))
+                return int(base * 1000000)
+            elif 'B' in count_text:
+                base = float(count_text.replace('B', ''))
+                return int(base * 1000000000)
             else:
+                # Just a regular number
                 return int(count_text)
-        except:
+        except (ValueError, TypeError):
             return None
     
     def load_data(self):
