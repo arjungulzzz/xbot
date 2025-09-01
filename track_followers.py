@@ -341,7 +341,7 @@ class TwitterFollowerBot:
             # Post error tweet
             if self.client:
                 error_tweet = f"❌ Could not get follower count for @{self.target_username} today. Will try again tomorrow! #FollowerTracker"
-                self.post_tweet(error_tweet)
+                # self.post_tweet(error_tweet)
             return False
         
         logger.info(f"✓ Current followers: {current_count:,}")
