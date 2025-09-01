@@ -1,4 +1,3 @@
-# track_and_tweet.py
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -8,11 +7,13 @@ import logging
 import tweepy
 import re
 
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class TwitterFollowerBot:
     def __init__(self):
+        # Configuration
         self.target_username = os.getenv('TARGET_USERNAME', 'elonmusk')
         self.data_file = 'follower_data.json'
         
@@ -23,16 +24,22 @@ class TwitterFollowerBot:
         self.access_token = os.getenv('TWITTER_ACCESS_TOKEN')
         self.access_token_secret = os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
         
-        # Initialize Twitter API
-        self.setup_twitter_api()
-        
+        # Headers for web scraping
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        
+        # Initialize Twitter API
+        self.client = None
+        self.setup_twitter_api()
     
     def setup_twitter_api(self):
         """Initialize Twitter API client"""
         try:
+            if not all([self.bearer_token, self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
+                logger.error("Missing Twitter API credentials")
+                return False
+            
             self.client = tweepy.Client(
                 bearer_token=self.bearer_token,
                 consumer_key=self.api_key,
@@ -44,107 +51,161 @@ class TwitterFollowerBot:
             
             # Test authentication
             me = self.client.get_me()
-            logger.info(f"Twitter API authenticated as: @{me.data.username}")
+            if me.data:
+                logger.info(f"✓ Twitter API authenticated as: @{me.data.username}")
+                return True
+            else:
+                logger.error("✗ Twitter API authentication failed")
+                return False
             
         except Exception as e:
-            logger.error(f"Twitter API setup failed: {e}")
-            self.client = None
+            logger.error(f"✗ Twitter API setup failed: {e}")
+            return False
     
     def get_follower_count(self, username):
         """Scrape follower count from multiple sources"""
+        logger.info(f"Getting follower count for @{username}")
         
-        # Method 1: Try multiple Nitter instances with better error handling
+        # Method 1: Try Nitter instances
         nitter_instances = [
             "https://nitter.net",
             "https://nitter.it",
             "https://nitter.fdn.fr",
             "https://nitter.kavin.rocks",
-            "https://nitter.unixfox.eu",
-            "https://nitter.domain.glass"
+            "https://nitter.unixfox.eu"
         ]
         
         for instance in nitter_instances:
-            try:
-                url = f"{instance}/{username}"
-                logger.info(f"Trying {instance}")
-                response = requests.get(url, headers=self.headers, timeout=10)
-                
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    
-                    # Multiple methods to find follower count
-                    count = None
-                    
-                    # Method 1: profile-stat-num class
-                    stats = soup.find_all('span', class_='profile-stat-num')
-                    if len(stats) >= 2:  # Should have tweets, following, followers
-                        count_text = stats[1].get_text().strip()  # Followers usually at index 1
-                        count = self.parse_count(count_text)
-                    
-                    # Method 2: Look for profile-stat with "followers" text
-                    if not count:
-                        stat_divs = soup.find_all('div', class_='profile-stat')
-                        for div in stat_divs:
-                            if 'follower' in div.get_text().lower():
-                                num_span = div.find('span', class_='profile-stat-num')
-                                if num_span:
-                                    count = self.parse_count(num_span.get_text().strip())
-                                    break
-                    
-                    # Method 3: Look for any text with "followers"
-                    if not count:
-                        follower_elements = soup.find_all(string=re.compile(r'[\d,KM.]+\s*[Ff]ollowers?'))
-                        for element in follower_elements:
-                            match = re.search(r'([\d,KM.]+)', element)
-                            if match:
-                                count = self.parse_count(match.group(1))
-                                if count:
-                                    break
-                    
-                    if count and count > 100:  # Basic sanity check
-                        logger.info(f"✓ Got follower count from {instance}: {count:,}")
-                        return count
-                    else:
-                        logger.info(f"✗ No valid count found on {instance}")
-                else:
-                    logger.info(f"✗ {instance} returned status {response.status_code}")
-                    
-            except requests.exceptions.Timeout:
-                logger.warning(f"✗ {instance} timed out")
-            except requests.exceptions.ConnectionError:
-                logger.warning(f"✗ {instance} connection failed")
-            except Exception as e:
-                logger.warning(f"✗ {instance} failed: {str(e)[:100]}")
-                continue
+            count = self.try_nitter_instance(instance, username)
+            if count:
+                return count
         
         # Method 2: Try Social Blade
-        logger.info("Trying Social Blade...")
+        count = self.try_social_blade(username)
+        if count:
+            return count
+        
+        logger.error("❌ All scraping methods failed")
+        return None
+    
+    def try_nitter_instance(self, instance, username):
+        """Try to get follower count from a Nitter instance"""
+        try:
+            url = f"{instance}/{username}"
+            logger.info(f"Trying {instance}")
+            
+            response = requests.get(url, headers=self.headers, timeout=10)
+            
+            if response.status_code != 200:
+                logger.info(f"✗ {instance} returned status {response.status_code}")
+                return None
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Method 1: Look for profile-stat-num spans
+            stats = soup.find_all('span', class_='profile-stat-num')
+            if len(stats) >= 2:
+                # Usually: [tweets, following, followers] or [tweets, followers, following]
+                for i, stat in enumerate(stats):
+                    count_text = stat.get_text().strip()
+                    count = self.parse_count(count_text)
+                    if count and count > 1000:  # Basic sanity check
+                        # Check if this is likely the follower count by looking at surrounding text
+                        parent = stat.find_parent()
+                        if parent and 'follower' in parent.get_text().lower():
+                            logger.info(f"✓ Found follower count from {instance}: {count:,}")
+                            return count
+            
+            # Method 2: Look for specific follower text
+            follower_elements = soup.find_all(string=re.compile(r'[\d,KM.]+\s*[Ff]ollowers?'))
+            for element in follower_elements:
+                match = re.search(r'([\d,KM.]+)', element)
+                if match:
+                    count = self.parse_count(match.group(1))
+                    if count and count > 1000:
+                        logger.info(f"✓ Found follower count from {instance}: {count:,}")
+                        return count
+            
+            # Method 3: Look for profile-stat divs
+            stat_divs = soup.find_all('div', class_='profile-stat')
+            for div in stat_divs:
+                if 'follower' in div.get_text().lower():
+                    num_span = div.find('span', class_='profile-stat-num')
+                    if num_span:
+                        count = self.parse_count(num_span.get_text().strip())
+                        if count and count > 1000:
+                            logger.info(f"✓ Found follower count from {instance}: {count:,}")
+                            return count
+            
+            logger.info(f"✗ No follower count found on {instance}")
+            return None
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"✗ {instance} timed out")
+            return None
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"✗ {instance} connection failed")
+            return None
+        except Exception as e:
+            logger.warning(f"✗ {instance} failed: {str(e)[:100]}")
+            return None
+    
+    def try_social_blade(self, username):
+        """Try to get follower count from Social Blade"""
         try:
             url = f"https://socialblade.com/twitter/user/{username}"
+            logger.info("Trying Social Blade")
+            
             response = requests.get(url, headers=self.headers, timeout=15)
             
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Look for follower count in Social Blade
-                # Try to find elements that might contain follower count
-                potential_numbers = []
-                
-                # Look for numbers in span tags with specific styles
-                number_spans = soup.find_all('span', style=re.compile(r'font-weight:\s*bold'))
-                for span in number_spans:
-                    text = span.get_text().strip()
-                    if re.match(r'^\d{1,3}(,\d{3})*
+            if response.status_code != 200:
+                logger.info(f"✗ Social Blade returned status {response.status_code}")
+                return None
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Look for numbers that could be follower counts
+            potential_numbers = []
+            
+            # Find all bold numbers (Social Blade uses bold for stats)
+            bold_elements = soup.find_all(['b', 'strong'])
+            for element in bold_elements:
+                text = element.get_text().strip()
+                if re.match(r'^\d{1,3}(,\d{3})*$', text):
+                    num = int(text.replace(',', ''))
+                    if 1000 <= num <= 500000000:  # Reasonable range
+                        potential_numbers.append(num)
+            
+            # Also check spans with bold styling
+            span_elements = soup.find_all('span', style=re.compile(r'font-weight:\s*bold'))
+            for element in span_elements:
+                text = element.get_text().strip()
+                if re.match(r'^\d{1,3}(,\d{3})*$', text):
+                    num = int(text.replace(',', ''))
+                    if 1000 <= num <= 500000000:
+                        potential_numbers.append(num)
+            
+            if potential_numbers:
+                # Return the largest number (most likely to be followers)
+                follower_count = max(potential_numbers)
+                logger.info(f"✓ Found follower count from Social Blade: {follower_count:,}")
+                return follower_count
+            
+            logger.info("✗ No follower count found on Social Blade")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"✗ Social Blade failed: {e}")
+            return None
     
     def parse_count(self, count_text):
-        """Parse follower count text (handles K, M notation)"""
+        """Parse follower count text (handles K, M, B notation)"""
         if not count_text:
             return None
             
         count_text = count_text.strip().upper().replace(',', '').replace(' ', '')
         
         try:
-            # Handle decimal notation like "1.2M" or "150.5K"
             if 'K' in count_text:
                 base = float(count_text.replace('K', ''))
                 return int(base * 1000)
@@ -155,38 +216,43 @@ class TwitterFollowerBot:
                 base = float(count_text.replace('B', ''))
                 return int(base * 1000000000)
             else:
-                # Just a regular number
                 return int(count_text)
         except (ValueError, TypeError):
             return None
     
     def load_data(self):
-        """Load historical data"""
+        """Load historical follower data"""
         try:
             if os.path.exists(self.data_file):
                 with open(self.data_file, 'r') as f:
-                    return json.load(f)
-            return {}
+                    data = json.load(f)
+                    logger.info(f"Loaded historical data with {len(data)} accounts")
+                    return data
+            else:
+                logger.info("No historical data found, starting fresh")
+                return {}
         except Exception as e:
             logger.error(f"Error loading data: {e}")
             return {}
     
     def save_data(self, data):
-        """Save data to file"""
+        """Save follower data to file"""
         try:
             with open(self.data_file, 'w') as f:
                 json.dump(data, f, indent=2)
+            logger.info("Data saved successfully")
         except Exception as e:
             logger.error(f"Error saving data: {e}")
     
     def calculate_change(self, current_count, history):
-        """Calculate change from ~24 hours ago"""
+        """Calculate follower change from ~24 hours ago"""
         if not history:
             return None, None, None
         
         now = datetime.now()
         target_time = now - timedelta(hours=24)
         
+        # Find the closest record to 24 hours ago
         closest_record = None
         min_diff = float('inf')
         
@@ -205,7 +271,7 @@ class TwitterFollowerBot:
         return None, None, None
     
     def format_tweet(self, username, current_count, change, hours_ago, previous_count):
-        """Format tweet message (within 280 chars)"""
+        """Format tweet message (within 280 characters)"""
         current_formatted = f"{current_count:,}"
         
         if change is None:
@@ -227,15 +293,18 @@ class TwitterFollowerBot:
             change_text = "0"
             verb = "no change"
         
-        # Keep it concise for Twitter's 280 char limit
+        # Format tweet
         tweet = f"{emoji} @{username} {verb} {change_text} followers in ~{hours_ago:.0f}h\n\n"
-        tweet += f"📊 {current_formatted}\n"
-        tweet += f"📈 {change_text}\n\n"
+        tweet += f"📊 Current: {current_formatted}\n"
+        tweet += f"📈 Change: {change_text}\n\n"
         tweet += f"#FollowerTracker"
         
-        # Truncate if too long
+        # Check character limit
         if len(tweet) > 280:
-            tweet = f"{emoji} @{username} {verb} {change_text} followers\n\n📊 {current_formatted} | 📈 {change_text}\n\n#FollowerTracker"
+            # Shorter version
+            tweet = f"{emoji} @{username} {verb} {change_text} followers\n\n"
+            tweet += f"{current_formatted} ({change_text})\n\n"
+            tweet += f"#FollowerTracker"
         
         return tweet
     
@@ -247,67 +316,84 @@ class TwitterFollowerBot:
         
         try:
             response = self.client.create_tweet(text=message)
-            tweet_id = response.data['id']
-            tweet_url = f"https://twitter.com/i/status/{tweet_id}"
-            logger.info(f"Tweet posted successfully: {tweet_url}")
-            return True
+            if response.data:
+                tweet_id = response.data['id']
+                tweet_url = f"https://twitter.com/i/status/{tweet_id}"
+                logger.info(f"✓ Tweet posted successfully: {tweet_url}")
+                return True
+            else:
+                logger.error("✗ Tweet response has no data")
+                return False
             
         except Exception as e:
-            logger.error(f"Error posting tweet: {e}")
+            logger.error(f"✗ Error posting tweet: {e}")
             return False
     
     def run(self):
         """Main execution function"""
-        logger.info(f"Tracking followers for @{self.target_username}")
+        logger.info("=" * 60)
+        logger.info(f"Starting follower tracking for @{self.target_username}")
+        logger.info("=" * 60)
         
         # Get current follower count
         current_count = self.get_follower_count(self.target_username)
         if not current_count:
-            error_tweet = f"❌ Could not get follower count for @{self.target_username} today. Will try again tomorrow! #FollowerTracker"
+            # Post error tweet
             if self.client:
+                error_tweet = f"❌ Could not get follower count for @{self.target_username} today. Will try again tomorrow! #FollowerTracker"
                 self.post_tweet(error_tweet)
-            logger.error("Could not get follower count")
             return False
         
-        logger.info(f"Current followers: {current_count:,}")
+        logger.info(f"✓ Current followers: {current_count:,}")
         
-        # Load and process data
+        # Load historical data
         all_data = self.load_data()
         user_history = all_data.get(self.target_username, [])
         
-        # Calculate change
+        # Calculate change from 24 hours ago
         change, hours_ago, previous_count = self.calculate_change(current_count, user_history)
         
         # Add new record
-        user_history.append({
+        new_record = {
             'followers_count': current_count,
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        user_history.append(new_record)
         
-        # Keep only last 30 days
+        # Keep only last 30 days to save space
         cutoff = datetime.now() - timedelta(days=30)
-        user_history = [r for r in user_history if datetime.fromisoformat(r['timestamp']) > cutoff]
+        user_history = [
+            record for record in user_history 
+            if datetime.fromisoformat(record['timestamp']) > cutoff
+        ]
         
-        # Save data
+        # Save updated data
         all_data[self.target_username] = user_history
         self.save_data(all_data)
         
-        # Format and post tweet
-        tweet_text = self.format_tweet(self.target_username, current_count, change, hours_ago, previous_count)
+        # Format tweet message
+        tweet_text = self.format_tweet(
+            self.target_username, 
+            current_count, 
+            change, 
+            hours_ago, 
+            previous_count
+        )
         
-        print("Tweet to post:")
-        print("=" * 50)
-        print(tweet_text)
-        print(f"Characters: {len(tweet_text)}/280")
-        print("=" * 50)
+        # Display tweet preview
+        logger.info("Tweet to post:")
+        logger.info("=" * 50)
+        logger.info(tweet_text)
+        logger.info(f"Characters: {len(tweet_text)}/280")
+        logger.info("=" * 50)
         
         # Post tweet
         success = self.post_tweet(tweet_text)
         
         if success:
-            logger.info("Successfully posted follower update tweet!")
+            logger.info("✅ Bot run completed successfully!")
         else:
-            logger.error("Failed to post tweet")
+            logger.error("❌ Failed to post tweet")
         
         return success
 
