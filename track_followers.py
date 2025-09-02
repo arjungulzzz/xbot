@@ -26,7 +26,12 @@ class TwitterFollowerBot:
         
         # Headers for web scraping
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         
         # Initialize Twitter API
@@ -68,11 +73,13 @@ class TwitterFollowerBot:
         
         # Method 1: Try Nitter instances
         nitter_instances = [
-            "https://nitter.net",
             "https://nitter.it",
-            "https://nitter.fdn.fr",
+            "https://nitter.privacydev.net",
+            "https://nitter.fdn.fr", 
             "https://nitter.kavin.rocks",
-            "https://nitter.unixfox.eu"
+            "https://nitter.1d4.us",
+            "https://nitter.42l.fr",
+            "https://nitter.pussthecat.org"
         ]
         
         for instance in nitter_instances:
@@ -93,8 +100,8 @@ class TwitterFollowerBot:
         try:
             url = f"{instance}/{username}"
             logger.info(f"Trying {instance}")
-            
-            response = requests.get(url, headers=self.headers, timeout=10)
+
+            response = requests.get(url, headers=self.headers, timeout=15)
             
             if response.status_code != 200:
                 logger.info(f"✗ {instance} returned status {response.status_code}")
