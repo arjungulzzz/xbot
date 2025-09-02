@@ -111,20 +111,44 @@ class TwitterFollowerBot:
             # soup = BeautifulSoup(response.content, 'html.parser')
             response.encoding = 'utf-8'
             soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Debug: Check what li elements exist
+            all_lis = soup.find_all('li')
+            logger.info(f"Found {len(all_lis)} li elements")
             
-            # Get all profile stats with their context
-            profile_stats = {}
-            for li_class in ['posts', 'following', 'followers']:
-                li_element = soup.find('li', class_=li_class)
-                if li_element:
-                    stat_span = li_element.find('span', class_='profile-stat-num')
-                    if stat_span:
-                        count_text = stat_span.get_text().strip()
-                        logger.info(f"{li_class}: {count_text}")
-                        count = self.parse_count(count_text)
-                        profile_stats[li_class] = count
+            for i, li in enumerate(all_lis[:10]):  # Check first 10
+                li_classes = li.get('class', [])
+                li_text = li.get_text().strip()[:50]  # First 50 chars
+                logger.info(f"Li {i}: classes={li_classes}, text='{li_text}'")
             
-            logger.info(f"Profile stats: {profile_stats}")
+            # Debug: Check what spans with profile-stat-num exist
+            stats = soup.find_all('span', class_='profile-stat-num')
+            logger.info(f"Found {len(stats)} profile-stat-num spans")
+            
+            for i, stat in enumerate(stats):
+                stat_text = stat.get_text().strip()
+                # Get parent elements to understand context
+                parent = stat.find_parent()
+                grandparent = parent.find_parent() if parent else None
+                
+                parent_info = f"parent: {parent.name} {parent.get('class', [])}" if parent else "no parent"
+                grandparent_info = f"grandparent: {grandparent.name} {grandparent.get('class', [])}" if grandparent else "no grandparent"
+                
+                logger.info(f"Stat {i}: '{stat_text}' - {parent_info} - {grandparent_info}")
+            
+            # Debug: Try different selectors
+            selectors_to_try = [
+                'li.followers',
+                '.followers',
+                'li[class*="follow"]',
+                '*[class*="follow"]'
+            ]
+            
+            for selector in selectors_to_try:
+                elements = soup.select(selector)
+                logger.info(f"Selector '{selector}': found {len(elements)} elements")
+                for elem in elements[:3]:  # Show first 3
+                    logger.info(f"  - {elem.name} {elem.get('class', [])} text: '{elem.get_text().strip()[:30]}'")
             
             # Return follower count if found and valid
             if 'followers' in profile_stats and profile_stats['followers']:
