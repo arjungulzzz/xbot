@@ -108,24 +108,34 @@ class TwitterFollowerBot:
                 logger.info(f"✗ {instance} returned status {response.status_code}")
                 return None
             
-            soup = BeautifulSoup(response.content, 'html.parser')
+            # soup = BeautifulSoup(response.content, 'html.parser')
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Method 1: Look for profile-stat-num spans
-            stats = soup.find_all('span', class_='profile-stat-num')
-            logger.info(len(stats))
-            if len(stats) >= 2:
-                # Usually: [tweets, following, followers] or [tweets, followers, following]
-                for i, stat in enumerate(stats):
-                    count_text = stat.get_text().strip()
-                    logger.info(f"count_text")
-                    count = self.parse_count(count_text)
-                    logger.info(f"count")
-                    if count and count > 1000:  # Basic sanity check
-                        # Check if this is likely the follower count by looking at surrounding text
-                        parent = stat.find_parent()
-                        if parent and 'followers' in parent.get_text().lower():
-                            logger.info(f"✓ Found follower count from {instance}: {count:,}")
-                            return count
+            # Get all profile stats with their context
+            profile_stats = {}
+            for li_class in ['posts', 'following', 'followers']:
+                li_element = soup.find('li', class_=li_class)
+                if li_element:
+                    stat_span = li_element.find('span', class_='profile-stat-num')
+                    if stat_span:
+                        count_text = stat_span.get_text().strip()
+                        logger.info(f"{li_class}: {count_text}")
+                        count = self.parse_count(count_text)
+                        profile_stats[li_class] = count
+            
+            logger.info(f"Profile stats: {profile_stats}")
+            
+            # Return follower count if found and valid
+            if 'followers' in profile_stats and profile_stats['followers']:
+                follower_count = profile_stats['followers']
+                if follower_count > 1000:  # Basic sanity check
+                    logger.info(f"✓ Found follower count from {instance}: {follower_count:,}")
+                    return follower_count
+                else:
+                    logger.info(f"Follower count too low: {follower_count}")
+            else:
+                logger.info("No followers data found")
             
             # Method 2: Look for specific follower text
             follower_elements = soup.find_all(string=re.compile(r'[\d,KM.]+\s*[Ff]ollowers?'))
