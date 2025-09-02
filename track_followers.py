@@ -73,6 +73,7 @@ class TwitterFollowerBot:
         
         # Method 1: Try Nitter instances
         nitter_instances = [
+            "https://nitter.net",
             "https://nitter.it",
             "https://nitter.privacydev.net",
             "https://nitter.fdn.fr", 
