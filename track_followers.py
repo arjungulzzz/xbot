@@ -112,11 +112,14 @@ class TwitterFollowerBot:
             
             # Method 1: Look for profile-stat-num spans
             stats = soup.find_all('span', class_='profile-stat-num')
+            logger.info(len(stats))
             if len(stats) >= 2:
                 # Usually: [tweets, following, followers] or [tweets, followers, following]
                 for i, stat in enumerate(stats):
                     count_text = stat.get_text().strip()
+                    logger.info(f"count_text")
                     count = self.parse_count(count_text)
+                    logger.info(f"count")
                     if count and count > 1000:  # Basic sanity check
                         # Check if this is likely the follower count by looking at surrounding text
                         parent = stat.find_parent()
