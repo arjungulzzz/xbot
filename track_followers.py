@@ -112,7 +112,7 @@ class TwitterFollowerBot:
                     if count and count > 1000:  # Basic sanity check
                         # Check if this is likely the follower count by looking at surrounding text
                         parent = stat.find_parent()
-                        if parent and 'follower' in parent.get_text().lower():
+                        if parent and 'followers' in parent.get_text().lower():
                             logger.info(f"✓ Found follower count from {instance}: {count:,}")
                             return count
             
