@@ -112,54 +112,37 @@ class TwitterFollowerBot:
             response.encoding = 'utf-8'
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Debug: Check what li elements exist
-            all_lis = soup.find_all('li')
-            logger.info(f"Found {len(all_lis)} li elements")
+            response = requests.get(url, headers=self.headers, timeout=15)
             
-            for i, li in enumerate(all_lis[:10]):  # Check first 10
-                li_classes = li.get('class', [])
-                li_text = li.get_text().strip()[:50]  # First 50 chars
-                logger.info(f"Li {i}: classes={li_classes}, text='{li_text}'")
+            if response.status_code != 200:
+                logger.info(f"✗ {instance} returned status {response.status_code}")
+                return None
             
-            # Debug: Check what spans with profile-stat-num exist
-            stats = soup.find_all('span', class_='profile-stat-num')
-            logger.info(f"Found {len(stats)} profile-stat-num spans")
+            # Fix encoding
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            for i, stat in enumerate(stats):
-                stat_text = stat.get_text().strip()
-                # Get parent elements to understand context
-                parent = stat.find_parent()
-                grandparent = parent.find_parent() if parent else None
-                
-                parent_info = f"parent: {parent.name} {parent.get('class', [])}" if parent else "no parent"
-                grandparent_info = f"grandparent: {grandparent.name} {grandparent.get('class', [])}" if grandparent else "no grandparent"
-                
-                logger.info(f"Stat {i}: '{stat_text}' - {parent_info} - {grandparent_info}")
+            # Debug: Print more of the HTML to see what we're actually getting
+            logger.info(f"HTML length: {len(response.text)}")
+            logger.info(f"First 1000 chars of HTML:")
+            logger.info(response.text[:1000])
             
-            # Debug: Try different selectors
-            selectors_to_try = [
-                'li.followers',
-                '.followers',
-                'li[class*="follow"]',
-                '*[class*="follow"]'
-            ]
+            # Check if this is an error page or different structure
+            title = soup.find('title')
+            if title:
+                logger.info(f"Page title: {title.get_text()}")
             
-            for selector in selectors_to_try:
-                elements = soup.select(selector)
-                logger.info(f"Selector '{selector}': found {len(elements)} elements")
-                for elem in elements[:3]:  # Show first 3
-                    logger.info(f"  - {elem.name} {elem.get('class', [])} text: '{elem.get_text().strip()[:30]}'")
+            # Look for any elements that might contain the stats
+            potential_stats = soup.find_all(text=lambda text: text and any(keyword in text.lower() for keyword in ['followers', 'following', 'posts', 'tweets']))
+            logger.info(f"Found {len(potential_stats)} elements containing stat keywords")
+            for stat_text in potential_stats[:5]:
+                logger.info(f"Stat text: '{stat_text.strip()}'")
             
-            # Return follower count if found and valid
-            if 'followers' in profile_stats and profile_stats['followers']:
-                follower_count = profile_stats['followers']
-                if follower_count > 1000:  # Basic sanity check
-                    logger.info(f"✓ Found follower count from {instance}: {follower_count:,}")
-                    return follower_count
-                else:
-                    logger.info(f"Follower count too low: {follower_count}")
-            else:
-                logger.info("No followers data found")
+            # Check for any numbers that look like follower counts
+            import re
+            numbers = re.findall(r'[\d,]+', response.text)
+            large_numbers = [num for num in numbers if len(num.replace(',', '')) >= 4]  # Numbers with 4+ digits
+            logger.info(f"Large numbers found: {large_numbers[:10]}")
             
             # Method 2: Look for specific follower text
             follower_elements = soup.find_all(string=re.compile(r'[\d,KM.]+\s*[Ff]ollowers?'))
